@@ -1,49 +1,84 @@
-import argparse
 from pathlib import Path
 import math
+import glob
+import json
+import tempfile
+import subprocess
+import sys
+import time
 import numpy as np
 import pandas as pd
 from gurobipy import Model, GRB, quicksum
 
+INST_DIR = Path("instances/general")
+KS = [3, 4, 5, 6]
+TIME_LIMIT_SEC = 10 * 60
+OUT_DIR = Path("results")
 
-def load_points(path, sep=";", decimal=",", limit_n=None):
-    df = pd.read_csv(
-        path, sep=sep, header=None, decimal=decimal, engine="python", comment="#"
-    )
+GUROBI_MEMLIMIT_MB = 16000
+GUROBI_THREADS = None
+GUROBI_SEED = 42
+GUROBI_OUTPUT = 1
 
-    if limit_n is not None:
-        df = df.iloc[:limit_n, :]
-
-    df = df.apply(pd.to_numeric, errors="coerce").dropna().reset_index(drop=True)
-
-    return df.to_numpy(dtype=float)
+SUBPROC_GRACE_SEC = 30
 
 
-def standardize_like_R(X):
+def carregar_pontos(path, limit_n=None):
+    cand = [
+        (";", ","),
+        (",", "."),
+        (r"\s+", "."),
+        (";", "."),
+        (",", ","),
+    ]
+    for s, d in cand:
+        try:
+            df = pd.read_csv(
+                path,
+                sep=s,
+                header=None,
+                decimal=d,
+                engine="python",
+                comment="#",
+                on_bad_lines="skip",
+            )
+            if limit_n is not None:
+                df = df.iloc[:limit_n, :]
+            df = df.apply(pd.to_numeric, errors="coerce")
+            df = df.dropna().reset_index(drop=True)
+            if df.shape[1] >= 2 and len(df) >= 2:
+                return df.to_numpy(dtype=float), ""
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+            continue
+    return None, f"Falha ao ler {path} com separadores/decimais conhecidos."
+
+
+def padronizar_como_R(X):
     mu = X.mean(axis=0, keepdims=True)
     sigma = X.std(axis=0, ddof=1, keepdims=True)
     sigma[sigma == 0.0] = 1.0
-
     return (X - mu) / sigma
 
 
-def pairwise_euclidean(X):
+def distancia_euclidiana_par(X):
     a = np.sum(X * X, axis=1, keepdims=True)
     D2 = a + a.T - 2.0 * (X @ X.T)
     np.maximum(D2, 0.0, out=D2)
     D = np.sqrt(D2, dtype=float)
     np.fill_diagonal(D, 0.0)
-
     return D
 
 
-def solve_kmedoids_ilp(
+def resolver_kmedoids_ilp(
     D,
     k,
     time_limit,
     mip_gap,
     threads,
     seed,
+    memlimit_mb=None,
+    output_flag=1,
 ):
     n = D.shape[0]
     m = Model("kmedoids_ilp")
@@ -56,40 +91,36 @@ def solve_kmedoids_ilp(
         m.Params.Threads = int(threads)
     if seed is not None:
         m.Params.Seed = int(seed)
-    m.Params.OutputFlag = 1
+    if memlimit_mb is not None:
+        m.Params.MemLimit = float(memlimit_mb)
 
-    # variáveis
+    m.Params.OutputFlag = int(output_flag)
+
     y = m.addVars(n, vtype=GRB.BINARY, name="y")
     x = m.addVars(n, n, vtype=GRB.BINARY, name="x")
 
-    # objetivo: soma total das distâncias (custo médio = objetivo / n)
     m.setObjective(
         quicksum(D[i, j] * x[i, j] for i in range(n) for j in range(n)), GRB.MINIMIZE
     )
 
-    # cada ponto j é atendido por exatamente um medoid
     for j in range(n):
         m.addConstr(quicksum(x[i, j] for i in range(n)) == 1, name=f"assign[{j}]")
 
-    # link: só pode atribuir a i se i for medoid
     for i in range(n):
         for j in range(n):
             m.addConstr(x[i, j] <= y[i], name=f"link[{i},{j}]")
 
-    # exatamente k medoids
     m.addConstr(quicksum(y[i] for i in range(n)) == k, name="kmedoids")
-
-    # força medoid i a atender-se: evita soluções degeneradas e acelera
     for i in range(n):
         m.addConstr(x[i, i] == y[i], name=f"self[{i}]")
 
-    # otimizar
     m.optimize()
 
     status = m.Status
     best_obj = float("nan")
     x_sol = np.zeros((n, n), dtype=int)
     y_sol = np.zeros(n, dtype=int)
+
     if status in (GRB.OPTIMAL, GRB.TIME_LIMIT, GRB.INTERRUPTED):
         if m.SolCount > 0:
             best_obj = m.ObjVal
@@ -100,94 +131,259 @@ def solve_kmedoids_ilp(
                         x_sol[i, j] = 1
 
     runtime = m.Runtime
+
     try:
         mipgap_out = m.MIPGap
     except Exception:
         mipgap_out = math.nan
-    return status, best_obj, y_sol, x_sol, runtime, mipgap_out
+
+    try:
+        lower_bound = m.ObjBound
+    except Exception:
+        lower_bound = float("nan")
+
+    upper_bound = float("nan")
+    if m.SolCount and math.isfinite(best_obj):
+        upper_bound = best_obj
+
+    return status, best_obj, y_sol, x_sol, runtime, mipgap_out, lower_bound, upper_bound
 
 
-def write_outputs(out_prefix, D, k, status, obj, y_sol, x_sol, runtime, mipgap):
-    out_prefix = Path(out_prefix)
-    out_prefix.parent.mkdir(parents=True, exist_ok=True)
-    pref = str(out_prefix)
+def executar_worker(tmp_in, tmp_out):
+    with open(tmp_in, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
 
-    n = D.shape[0]
-    avg_obj = obj / n if n > 0 and math.isfinite(obj) else float("nan")
+    D = np.array(cfg["D"], dtype=float)
+    k = int(cfg["k"])
 
-    medoids = np.where(y_sol == 1)[0] + 1
-    pd.Series(medoids, name="medoid_index_1based").to_csv(
-        f"{pref}_medoids.csv", index=False
-    )
+    try:
+        status, obj, y_sol, x_sol, runtime, mipgap, lb, ub = resolver_kmedoids_ilp(
+            D,
+            k,
+            time_limit=cfg["time_limit"],
+            mip_gap=None,
+            threads=cfg["threads"],
+            seed=cfg["seed"],
+            memlimit_mb=cfg["memlimit_mb"],
+            output_flag=cfg["output_flag"],
+        )
+        n = int(D.shape[0])
+        avg = obj / n if n > 0 and math.isfinite(obj) else float("nan")
+        medoids_1b = (np.where(y_sol == 1)[0] + 1).tolist()
 
-    assign = np.argmax(x_sol, axis=0)
-    labels = assign + 1
-    pd.DataFrame({"point": np.arange(1, n + 1, dtype=int), "cluster": labels}).to_csv(
-        f"{pref}_clustering.csv", index=False
-    )
+        out = {
+            "ok": True,
+            "status": status,
+            "objective_total": obj,
+            "objective_avg_per_point": avg,
+            "runtime_sec": runtime,
+            "mip_gap": mipgap,
+            "lower_bound": lb,
+            "upper_bound": ub,
+            "medoids_1based": medoids_1b,
+            "fail_reason": "",
+        }
 
-    with open(f"{pref}_summary.txt", "w", encoding="utf-8") as f:
-        f.write(f"status={status}\n")
-        f.write(f"objective_total={obj}\n")
-        f.write(f"objective_avg_per_point={avg_obj}\n")
-        f.write(f"k={k}\n")
-        f.write(f"n={n}\n")
-        f.write(f"runtime_sec={runtime}\n")
-        if mipgap is not None and not (
-            isinstance(mipgap, float) and math.isnan(mipgap)
-        ):
-            f.write(f"mip_gap={mipgap}\n")
+    except Exception as e:
+        out = {
+            "ok": False,
+            "status": None,
+            "objective_total": float("nan"),
+            "objective_avg_per_point": float("nan"),
+            "runtime_sec": float("nan"),
+            "mip_gap": float("nan"),
+            "lower_bound": float("nan"),
+            "upper_bound": float("nan"),
+            "medoids_1based": [],
+            "fail_reason": f"EXCEPTION: {type(e).__name__}: {e}",
+        }
+
+    with open(tmp_out, "w", encoding="utf-8") as f:
+        json.dump(out, f)
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument(
-        "--data",
-        required=True,
-        help="Caminho do arquivo (ex.: Data_Sets_50/haberman.i)",
-    )
-    ap.add_argument("--k", type=int, required=True, help="Número de clusters/medoids")
-    ap.add_argument(
-        "--scale", action="store_true", help="Padronizar colunas (R::scale, ddof=1)"
-    )
-    ap.add_argument("--sep", default=";", help="Separador (default ';')")
-    ap.add_argument("--decimal", default=",", help="Decimal (default ',')")
+def executar_um_isolado(D, file_name, k):
+    cfg = {
+        "D": D.tolist(),
+        "k": int(k),
+        "time_limit": float(TIME_LIMIT_SEC),
+        "threads": GUROBI_THREADS,
+        "seed": GUROBI_SEED,
+        "memlimit_mb": GUROBI_MEMLIMIT_MB,
+        "output_flag": GUROBI_OUTPUT,
+    }
 
-    ap.add_argument("--time-limit", type=float, default=None)
-    ap.add_argument("--mip-gap", type=float, default=None)
-    ap.add_argument("--threads", type=int, default=None)
-    ap.add_argument("--seed", type=int, default=None)
+    with tempfile.TemporaryDirectory() as td:
+        tmp_in = Path(td) / "in.json"
+        tmp_out = Path(td) / "out.json"
 
-    ap.add_argument(
-        "--out-prefix",
-        default="results/kmedoids_ilp",
-        help="Prefixo de saída (sem extensão)",
-    )
-    args = ap.parse_args()
+        with open(tmp_in, "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
 
-    X = load_points(Path(args.data), sep=args.sep, decimal=args.decimal, limit_n=None)
-    if args.scale:
-        X = standardize_like_R(X)
-    D = pairwise_euclidean(X)
+        cmd = [sys.executable, __file__, "__worker__", str(tmp_in), str(tmp_out)]
+        p = subprocess.Popen(cmd)
+        t0 = time.time()
 
-    status, obj, y_sol, x_sol, runtime, mipgap = solve_kmedoids_ilp(
-        D,
-        args.k,
-        time_limit=args.time_limit,
-        mip_gap=args.mip_gap,
-        threads=args.threads,
-        seed=args.seed,
-    )
-    write_outputs(
-        Path(args.out_prefix), D, args.k, status, obj, y_sol, x_sol, runtime, mipgap
-    )
+        while True:
+            ret = p.poll()
+            if ret is not None:
+                break
+            if (time.time() - t0) > (TIME_LIMIT_SEC + SUBPROC_GRACE_SEC):
+                try:
+                    p.terminate()
+                except Exception:
+                    pass
+                time.sleep(2)
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+                ret = -9
+                break
+            time.sleep(0.2)
 
-    n = D.shape[0]
-    print(
-        f"Done. status={status}, objective_total={obj:.6f}, objective_avg={obj/n:.6f}, time={runtime:.2f}s"
-    )
-    print(f"Outputs at: {args.out_prefix}*")
+        if ret is None:
+            ret = p.wait()
+
+        if ret == 0 and tmp_out.exists():
+            with open(tmp_out, "r", encoding="utf-8") as f:
+                out = json.load(f)
+            if out.get("ok", False):
+                return {
+                    "status_text": "OK",
+                    "status": out["status"],
+                    "objective_total": out["objective_total"],
+                    "objective_avg_per_point": out["objective_avg_per_point"],
+                    "runtime_sec": out["runtime_sec"],
+                    "mip_gap": out["mip_gap"],
+                    "lower_bound": out["lower_bound"],
+                    "upper_bound": out["upper_bound"],
+                    "medoids_1based": " ".join(map(str, out["medoids_1based"])),
+                    "fail_reason": "",
+                }
+            else:
+                return {
+                    "status_text": "SOLVER_ERROR",
+                    "status": None,
+                    "objective_total": float("nan"),
+                    "objective_avg_per_point": float("nan"),
+                    "runtime_sec": float("nan"),
+                    "mip_gap": float("nan"),
+                    "lower_bound": float("nan"),
+                    "upper_bound": float("nan"),
+                    "medoids_1based": "",
+                    "fail_reason": out.get("fail_reason", "unknown error"),
+                }
+        else:
+            return {
+                "status_text": "FAILED_PROCESS",
+                "status": None,
+                "objective_total": float("nan"),
+                "objective_avg_per_point": float("nan"),
+                "runtime_sec": float("nan"),
+                "mip_gap": float("nan"),
+                "lower_bound": float("nan"),
+                "upper_bound": float("nan"),
+                "medoids_1based": "",
+                "fail_reason": f"exitcode={ret}",
+            }
+
+
+def salvar_acumulado(df_all):
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    csv_path = OUT_DIR / "kmedoids_ilp_all_runs.csv"
+    df_all.to_csv(csv_path, index=False)
+    try:
+        xlsx_path = OUT_DIR / "kmedoids_ilp_all_runs.xlsx"
+        df_all.to_excel(xlsx_path, index=False)
+    except Exception:
+        pass
+    return csv_path
+
+
+def principal():
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    files = sorted(glob.glob(str(INST_DIR / "*.i")) + glob.glob(str(INST_DIR / "*.I")))
+    if not files:
+        raise SystemExit(f"Nenhuma instância encontrada em {INST_DIR} (.i ou .I)")
+
+    all_rows = []
+
+    for f in files:
+        name = Path(f).name
+        stem = name[:-2] if name.lower().endswith(".i") else Path(f).stem
+
+        X, err = carregar_pontos(Path(f), limit_n=None)
+        if X is None:
+            print(err)
+            for k in KS:
+                row = {
+                    "file": name,
+                    "stem": stem,
+                    "k": k,
+                    "n": float("nan"),
+                    "status_text": "READ_FAIL",
+                    "status": None,
+                    "objective_total": float("nan"),
+                    "objective_avg_per_point": float("nan"),
+                    "runtime_sec": float("nan"),
+                    "mip_gap": float("nan"),
+                    "lower_bound": float("nan"),
+                    "upper_bound": float("nan"),
+                    "medoids_1based": "",
+                    "fail_reason": err,
+                }
+                all_rows.append(row)
+            df_now = pd.DataFrame(all_rows)
+            pth = salvar_acumulado(df_now)
+            print(f"[SAVE] Parcial após instância {name}: {pth}")
+            continue
+
+        X = padronizar_como_R(X)
+        D = distancia_euclidiana_par(X)
+
+        for k in KS:
+            res = executar_um_isolado(D, name, k)
+            n = D.shape[0]
+            row = {
+                "file": name,
+                "stem": stem,
+                "k": k,
+                "n": n,
+                "status_text": res["status_text"],
+                "status": res["status"],
+                "objective_total": res["objective_total"],
+                "objective_avg_per_point": res["objective_avg_per_point"],
+                "runtime_sec": res["runtime_sec"],
+                "mip_gap": res["mip_gap"],
+                "lower_bound": res["lower_bound"],
+                "upper_bound": res["upper_bound"],
+                "medoids_1based": res["medoids_1based"],
+                "fail_reason": res["fail_reason"],
+            }
+            all_rows.append(row)
+
+            if res["status_text"] == "OK":
+                print(
+                    f"{stem} | k={k} | status=OK | total={res['objective_total']:.6f} | "
+                    f"avg={res['objective_avg_per_point']:.6f} | time={res['runtime_sec']:.2f}s"
+                )
+            else:
+                print(
+                    f"{stem} | k={k} | status={res['status_text']} | reason={res['fail_reason']}"
+                )
+
+        df_now = pd.DataFrame(all_rows)
+        pth = salvar_acumulado(df_now)
+        print(f"[SAVE] Parcial após instância {name}: {pth}")
+
+    df_all = pd.DataFrame(all_rows)
+    csv_path = salvar_acumulado(df_all)
+    print(f"[OK] Planilha final: {csv_path}")
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) == 4 and sys.argv[1] == "__worker__":
+        executar_worker(sys.argv[2], sys.argv[3])
+    else:
+        principal()

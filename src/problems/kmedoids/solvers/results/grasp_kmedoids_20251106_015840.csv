@@ -1,3 +1,0 @@
-Configuration,Instance,BestCost,TotalIterations,IterationsToOptimal,ExecutionTimeMs,StoppingCriterion,StoppedByTime,SolutionSize
-GRASP_alpha=0.05,haberman.i,2215.993820,101,0,48598,NO_IMPROV,False,3
-GRASP_alpha=0.9,haberman.i,2215.993820,101,0,55797,NO_IMPROV,False,3
