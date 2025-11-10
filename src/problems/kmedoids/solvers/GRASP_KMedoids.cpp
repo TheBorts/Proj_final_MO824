@@ -72,8 +72,10 @@ Solution<int> GRASP_KMedoids::constructiveHeuristic()
             int c = CL[i];
             double dc = ObjFunction.evaluate_insertion_cost(c, *sol);
             deltas[i] = dc;
-            if (dc < min_dc) min_dc = dc;
-            if (dc > max_dc) max_dc = dc;
+            if (dc < min_dc) 
+                min_dc = dc;
+            if (dc > max_dc) 
+                max_dc = dc;
         }
 
         RCL.clear();
@@ -81,7 +83,8 @@ Solution<int> GRASP_KMedoids::constructiveHeuristic()
 
         for (size_t i = 0; i < CL.size(); ++i)
         {
-            if (deltas[i] <= thresh) RCL.push_back(CL[i]);
+            if (deltas[i] <= thresh) 
+                RCL.push_back(CL[i]);
         }
 
         int chosen;
@@ -100,7 +103,8 @@ Solution<int> GRASP_KMedoids::constructiveHeuristic()
             uniform_int_distribution<size_t> dist(0, RCL.size() - 1);
             chosen = RCL[dist(rng_)];
             auto it = find(CL.begin(), CL.end(), chosen);
-            if (it != CL.end()) CL.erase(it);
+            if (it != CL.end()) 
+                CL.erase(it);
         }
 
         sol->add(chosen);
@@ -149,7 +153,8 @@ Solution<int> GRASP_KMedoids::localSearch()
 
             CL.push_back(best_out);
             auto cit = find(CL.begin(), CL.end(), best_in);
-            if (cit != CL.end()) CL.erase(cit);
+            if (cit != CL.end()) 
+                CL.erase(cit);
 
             double c = ObjFunction.evaluate(*sol);
             sol->cost = c;

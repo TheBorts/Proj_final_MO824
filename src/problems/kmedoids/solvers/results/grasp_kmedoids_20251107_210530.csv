@@ -1,6 +1,0 @@
-config,file,n,k,alpha,construct_mode,ls_mode,reactive_alphas,reactive_block,sample_size,iterations,time_limit_s,timed_out,max_value,size,feasible,time_s,elements
-GRASP_alpha=0.050000,haberman.i,306,3,0.0500,STANDARD,BEST_IMPROVING,"",,,1000,1800,false,-1.127419,3,true,40.977,"242 67 172"
-GRASP_alpha=0.900000,haberman.i,306,3,0.9000,STANDARD,BEST_IMPROVING,"",,,1000,1800,false,-1.127419,3,true,59.586,"67 242 172"
-RPG_p=5,haberman.i,306,3,-1.0000,RPG,BEST_IMPROVING,"",,5,1000,1800,false,-1.30000,3,true,47.156,"242 172 67"
-RPG_p=10,haberman.i,306,3,-1.0000,RPG,BEST_IMPROVING,"",,10,1000,1800,false,-1.30000,3,true,43.776,"243 67 172"
-RPG_p=20,haberman.i,306,3,-1.0000,RPG,BEST_IMPROVING,"",,20,1000,1800,false,-1.30000,3,true,46.056,"67 172 242"

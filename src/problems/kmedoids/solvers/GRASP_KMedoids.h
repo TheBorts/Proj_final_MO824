@@ -21,13 +21,13 @@ class GRASP_KMedoids : public AbstractGRASP<int>
     Solution<int> createEmptySol() override;
     Solution<int> localSearch() override;
     Solution<int> constructiveHeuristic() override;
+    const int k_;
+    mt19937& rng_ = AbstractGRASP<int>::rng;
 
    private:
     const vector<vector<double>> D_;
     const int n_;
-    const int k_;
 
     KMedoidsEvaluator evaluator_;
 
-    mt19937& rng_ = AbstractGRASP<int>::rng;
 };

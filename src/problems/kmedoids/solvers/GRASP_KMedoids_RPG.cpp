@@ -8,9 +8,9 @@ Solution<int> GRASP_KMedoids_RPG::constructiveHeuristic()
     CL = makeCL();
     RCL = makeRCL();
     sol = createEmptySol();
-    cost = std::numeric_limits<double>::infinity();
+    cost = numeric_limits<double>::infinity();
 
-    auto& rng = AbstractGRASP<int>::rng;  // usar RNG estático da base
+    auto& rng = AbstractGRASP<int>::rng;
 
     while (static_cast<int>(sol->size()) < k_local_ && !CL.empty())
     {
@@ -22,11 +22,12 @@ Solution<int> GRASP_KMedoids_RPG::constructiveHeuristic()
         }
 
         updateCL();
-        if (CL.empty()) break;
+        if (CL.empty()) 
+            break;
 
-        const int m = std::min<int>(p_, static_cast<int>(CL.size()));
-        std::shuffle(CL.begin(), CL.end(), rng);
-        std::vector<int> sample(CL.begin(), CL.begin() + m);
+        const int m = min<int>(p_, static_cast<int>(CL.size()));
+        shuffle(CL.begin(), CL.end(), rng);
+        vector<int> sample(CL.begin(), CL.begin() + m);
 
         int chosen = sample[0];
         double best_dc = ObjFunction.evaluate_insertion_cost(chosen, *sol);
@@ -41,8 +42,9 @@ Solution<int> GRASP_KMedoids_RPG::constructiveHeuristic()
             }
         }
 
-        auto it = std::find(CL.begin(), CL.end(), chosen);
-        if (it != CL.end()) CL.erase(it);
+        auto it = find(CL.begin(), CL.end(), chosen);
+        if (it != CL.end()) 
+            CL.erase(it);
 
         sol->add(chosen);
         sol->cost = ObjFunction.evaluate(*sol);

@@ -13,6 +13,6 @@ class GRASP_KMedoids_RPG : public GRASP_KMedoids
     Solution<int> constructiveHeuristic() override;
 
    private:
-    int k_local_;  // <- copia do k (para não acessar k_ da base)
+    int k_local_;
     int p_;
 };
