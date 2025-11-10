@@ -76,10 +76,10 @@ vector<string> INSTANCE_FILES = {"2-FACE.i",
 
 bool USE_ZSCORE = true;
 
-vector<int> K_VALUES = {3, 4, 5, 6};
+vector<int> K_VALUES = {3, 4, 5, 6, 7};
 
 vector<double> ALPHA_VALUES = {0.05};
-vector<int> P_VALUES = {5, 10, 20};
+vector<int> P_VALUES = {5, 20};
 
 long MAX_TIME_MILLIS = 15 * 60L * 1000L;
 int MAX_TOTAL_ITERATIONS = 10000;
@@ -1008,58 +1008,34 @@ vector<string> ALLOW_INSTANCES = {
                                 //   "2-FACE.i",
                                 //   "200DATA.I",
                                 //   "400p3c.i",
-                                  "A1.I",
-                                  "BreastB.I",
-                                  "Compound.I",
+                                //   "A1.I",
+                                //   "BreastB.I",
+                                //   "Compound.I",
                                   "Concrete_Data.i",
-                                  "DBLCA.I",
-                                  "DBLCB.I",
                                   "DOWJONES.I",
-                                  "Normal300.i",
-                                  "PARKINSONS.i",
                                   "Prima_Indians.i",
                                   "SPRDESP.I",
                                   "TRIPADVISOR.I",
-                                  "Uniform400.i",
                                   "Uniform700.i",
-                                  "aggregation.I",
                                   "banknote_authentication.I",
                                   "broken-ring.i",
-                                  "bupa.I",
                                   "chart.i",
                                   "ecoli.i",
-                                  "face.i",
-                                  "forestfires.I",
                                   "gauss9.i",
-                                  "glass.I",
                                   "haberman.i",
-                                  "hayes-roth.I",
                                   "indian.i",
-                                  "indochina_combat.I",
-                                  "ionosphere.I",
-                                  "iris.i",
-                                  "maronna.i",
-                                  "moreshapes.i",
-                                  "new-thyroid.I",
                                   "numbers2.i",
-                                  "outliers.i",
-                                  "pib100.i",
-                                  "ruspini.i",
-                                  "sonar.I",
-                                  "spherical_4d3c.i",
                                   "synthetic_control.i",
-                                  "vowel2.i",
                                   "wdbc.I",
-                                  "wine.i",
                                   "yeast.i",
                                   "waveform.I"};
 
-vector<int> ALLOW_KS = {3, 4, 5, 6};
+vector<int> ALLOW_KS = {3, 4, 5, 6, 7};
 
 // vector<string> ALLOW_CONFIG_PREFIX = {"GRASP_alpha=0.05", "RPG_p=10"};
 // vector<string> ALLOW_CONFIG_PREFIX = {"GRASP_alpha=0.05"};
 vector<string> ALLOW_CONFIG_PREFIX = {
-    "GRASP_alpha=", "GRASP_FI_alpha=", "GRASP_POP_alpha=", "GRASP_RW_BI_alpha=", "RPG_p="};
+    "GRASP_alpha=", "GRASP_FI_alpha=", "GRASP_POP_alpha=", "RPG_p="};
 
 vector<string> BLOCK_CONFIG_PREFIX = {};
 
