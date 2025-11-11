@@ -1,0 +1,7 @@
+*.o
+*.log
+*.csv
+Makefile
+run_experiments
+run_grasp
+*.json
