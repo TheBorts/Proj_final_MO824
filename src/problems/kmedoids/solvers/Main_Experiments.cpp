@@ -19,6 +19,7 @@
 #include "problems/kmedoids/solvers/GRASP_KMedoids_POP.h"
 #include "problems/kmedoids/solvers/GRASP_KMedoids_RPG.h"
 #include "problems/kmedoids/solvers/GRASP_KMedoids_RW.h"
+#include "problems/kmedoids/solvers/GRASP_KMedoids_WLS.h"
 
 using namespace std;
 
@@ -81,7 +82,7 @@ vector<int> K_VALUES = {3, 4, 5, 6, 7};
 vector<double> ALPHA_VALUES = {0.05};
 vector<int> P_VALUES = {5, 20};
 
-long MAX_TIME_MILLIS = 15 * 60L * 1000L;
+long MAX_TIME_MILLIS = 10L * 1000L;
 int MAX_TOTAL_ITERATIONS = 10000;
 
 string RESULTS_DIR = "results";
@@ -394,7 +395,8 @@ enum class SolverKind
     RPG,
     StandardFI,
     POP,
-    RW_BI
+    RW_BI,
+    WLS
 };
 
 struct ExperimentConfig
@@ -760,6 +762,62 @@ class GRASP_KMedoids_POP_WithStopping : public GRASP_KMedoids_POP
     bool ttt_mode_;
 };
 
+class GRASP_KMedoids_WLS_WithStopping : public GRASP_KMedoids_WLS
+{
+   public:
+    GRASP_KMedoids_WLS_WithStopping(double alpha, int iterations,
+                                    vector<vector<double>>& D, int k, long max_time_ms,
+                                    double target_avg_value = -1.0, bool ttt_mode = false)
+        : GRASP_KMedoids_WLS(alpha, iterations, D, k), max_time_ms_(max_time_ms),
+        target_avg_value_(target_avg_value), ttt_mode_(ttt_mode)
+    {
+    }
+
+
+    Solution<int> solve()
+    {
+        bestSol = createEmptySol();
+        auto t0 = chrono::steady_clock::now();
+        int i = 0;
+        while (i < iterations)
+        {
+            auto now = chrono::steady_clock::now();
+            auto ms = chrono::duration_cast<chrono::milliseconds>(now - t0).count();
+            if (ms > max_time_ms_)
+            {
+                stopped_by_time = true;
+                break;
+            }
+
+            constructiveHeuristic();
+            localSearch();
+
+            if (bestSol->cost > sol->cost)
+            {
+                bestSol = sol;
+                iterations_to_best = i;
+            }
+            ++i;
+        }
+        total_iterations = i;
+        auto tf = chrono::steady_clock::now();
+        execution_time_ms =
+            (long) chrono::duration_cast<chrono::milliseconds>(tf - t0).count();
+        return *bestSol;
+    }
+
+    int total_iterations{0}, iterations_to_best{0};
+    long execution_time_ms{0};
+    bool stopped_by_time{false};
+    long time_to_target_ms{-1};
+
+   private:
+    long max_time_ms_;
+    double target_avg_value_;
+    bool ttt_mode_;
+
+};
+
 vector<ExperimentConfig> generate_configurations()
 {
     vector<ExperimentConfig> cfgs;
@@ -782,7 +840,11 @@ vector<ExperimentConfig> generate_configurations()
 
     for (double a : ALPHA_VALUES)
         cfgs.push_back(ExperimentConfig{"GRASP_POP_alpha=" + to_string(a), SolverKind::POP, a, -1});
-
+    
+    for (double a : ALPHA_VALUES)
+        cfgs.push_back(ExperimentConfig{"GRASP_WLS_alpha=" + to_string(a), SolverKind::WLS, a, -1});
+    
+    
     return cfgs;
 }
 
@@ -867,10 +929,18 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
                 append_ttt_line(ttt_csv, instance_file, k, config.name, target_avg, run,
                                 grasp.time_to_target_ms);
             }
-            else
+            else if (config.kind == SolverKind::RPG)
             {
                 GRASP_KMedoids_RPG_WithStopping grasp(0.0, MAX_TOTAL_ITERATIONS, D, k, config.p,
                                                       MAX_TIME_MILLIS, target_avg, true);
+                auto sol = grasp.solve();
+                append_ttt_line(ttt_csv, instance_file, k, config.name, target_avg, run,
+                                grasp.time_to_target_ms);
+            }
+            else
+            {
+                GRASP_KMedoids_WLS_WithStopping grasp(
+                    config.alpha, MAX_TOTAL_ITERATIONS, D, k, MAX_TIME_MILLIS);
                 auto sol = grasp.solve();
                 append_ttt_line(ttt_csv, instance_file, k, config.name, target_avg, run,
                                 grasp.time_to_target_ms);
@@ -948,9 +1018,19 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
         exec_ms = grasp.execution_time_ms;
         stopped_by_time = grasp.stopped_by_time;
     }
-    else
+    else if (config.kind == SolverKind::RPG)
     {
         GRASP_KMedoids_RPG_WithStopping grasp(0.0, MAX_TOTAL_ITERATIONS, D, k, config.p,
+                                              MAX_TIME_MILLIS);
+        sol = grasp.solve();
+        total_iterations = grasp.total_iterations;
+        iterations_to_best = grasp.iterations_to_best;
+        exec_ms = grasp.execution_time_ms;
+        stopped_by_time = grasp.stopped_by_time;
+    }
+    else
+    {
+        GRASP_KMedoids_WLS_WithStopping grasp(config.alpha, MAX_TOTAL_ITERATIONS, D, k,
                                               MAX_TIME_MILLIS);
         sol = grasp.solve();
         total_iterations = grasp.total_iterations;
@@ -1035,7 +1115,12 @@ vector<int> ALLOW_KS = {3, 4, 5, 6, 7};
 // vector<string> ALLOW_CONFIG_PREFIX = {"GRASP_alpha=0.05", "RPG_p=10"};
 // vector<string> ALLOW_CONFIG_PREFIX = {"GRASP_alpha=0.05"};
 vector<string> ALLOW_CONFIG_PREFIX = {
-    "GRASP_alpha=", "GRASP_FI_alpha=", "GRASP_POP_alpha=", "RPG_p="};
+    //"GRASP_alpha=",
+    //"GRASP_FI_alpha=",
+    //"GRASP_POP_alpha=",
+    //"RPG_p=",
+    "GRASP_WLS_alpha="
+};
 
 vector<string> BLOCK_CONFIG_PREFIX = {};
 
