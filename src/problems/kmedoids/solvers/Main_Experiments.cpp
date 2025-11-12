@@ -93,7 +93,7 @@ vector<string> INSTANCE_FILES = {"2-FACE.i",
 
 bool USE_ZSCORE = true;
 
-vector<int> K_VALUES = {20, 25, 50};
+vector<int> K_VALUES = {3, 4, 5, 6, 7, 20, 25, 50};
 
 vector<double> ALPHA_VALUES = {0.05};
 vector<int> P_VALUES = {20};
@@ -171,7 +171,7 @@ vector<string> ALLOW_INSTANCES = {"2-FACE.i",
 //                                   "wdbc.I",        "yeast.i",
 //                                   "waveform.I"};
 
-vector<int> ALLOW_KS = {20, 25};
+vector<int> ALLOW_KS = {6, 20, 25};
 
 vector<string> ALLOW_CONFIG_PREFIX = {
     "GRASP_alpha=",
@@ -183,14 +183,14 @@ vector<string> ALLOW_CONFIG_PREFIX = {
 vector<string> BLOCK_CONFIG_PREFIX = {};
 
 bool ENABLE_TTT_MODE = false;
-int TTT_RUNS = 50;
+int TTT_RUNS = 5;
 
 vector<tuple<string, int, double>> TTT_TARGETS = {
     // 2-FACE.i
     make_tuple("2-FACE.i", 3, 0.6777849370076154),
     make_tuple("2-FACE.i", 4, 0.5925680856930263),
     make_tuple("2-FACE.i", 5, 0.5136686686860198),
-    make_tuple("2-FACE.i", 6, 0.4551875829945722),
+    make_tuple("2-FACE.i", 6, 0.4571875829945722),
 
     // 200DATA.I
     make_tuple("200DATA.I", 3, 0.3717549369520792),
@@ -727,6 +727,7 @@ struct ExperimentResult
     int size{};
     bool feasible{};
     double time_s{};
+    double time_to_solution_s{};
     string elements;
 };
 
@@ -772,6 +773,10 @@ class GRASP_KMedoids_WithStopping : public GRASP_KMedoids
                 iterations_to_best = i;
                 last_improve_iter = i;  // >>> novo
                 no_improve_streak = 0;  // >>> novo
+                ms = chrono::duration_cast<chrono::milliseconds>(
+                         chrono::steady_clock::now() - t0)
+                         .count();
+                time_to_solution_ms = ms;
             }
             else
             {
@@ -818,6 +823,7 @@ class GRASP_KMedoids_WithStopping : public GRASP_KMedoids
     bool stopped_by_time{false};
     bool stopped_by_patience{false};  // >>> novo
     long time_to_target_ms{-1};
+    long time_to_solution_ms{-1};
 
    private:
     long max_time_ms_;
@@ -867,6 +873,10 @@ class GRASP_KMedoids_RW_WithStopping : public GRASP_KMedoids_RW
                 iterations_to_best = i;
                 last_improve_iter = i;  // >>> novo
                 no_improve_streak = 0;  // >>> novo
+                ms = chrono::duration_cast<chrono::milliseconds>(
+                         chrono::steady_clock::now() - t0)
+                         .count();
+                time_to_solution_ms = ms;
             }
             else
             {
@@ -910,6 +920,7 @@ class GRASP_KMedoids_RW_WithStopping : public GRASP_KMedoids_RW
     bool stopped_by_time{false};
     bool stopped_by_patience{false};  // >>> novo
     long time_to_target_ms{-1};
+    long time_to_solution_ms{-1};
 
    private:
     long max_time_ms_;
@@ -959,6 +970,10 @@ class GRASP_KMedoids_FI_WithStopping : public GRASP_KMedoids_FI
                 iterations_to_best = i;
                 last_improve_iter = i;  // >>> novo
                 no_improve_streak = 0;  // >>> novo
+                ms = chrono::duration_cast<chrono::milliseconds>(
+                         chrono::steady_clock::now() - t0)
+                         .count();
+                time_to_solution_ms = ms;
             }
             else
             {
@@ -1005,6 +1020,7 @@ class GRASP_KMedoids_FI_WithStopping : public GRASP_KMedoids_FI
     bool stopped_by_time{false};
     bool stopped_by_patience{false};  // >>> novo
     long time_to_target_ms{-1};
+    long time_to_solution_ms{-1};
 
    private:
     long max_time_ms_;
@@ -1054,6 +1070,10 @@ class GRASP_KMedoids_RPG_WithStopping : public GRASP_KMedoids_RPG
                 iterations_to_best = i;
                 last_improve_iter = i;  // >>> novo
                 no_improve_streak = 0;  // >>> novo
+                ms = chrono::duration_cast<chrono::milliseconds>(
+                         chrono::steady_clock::now() - t0)
+                         .count();
+                time_to_solution_ms = ms;  // atualizar sempre que melhorar
             }
             else
             {
@@ -1100,6 +1120,7 @@ class GRASP_KMedoids_RPG_WithStopping : public GRASP_KMedoids_RPG
     bool stopped_by_time{false};
     bool stopped_by_patience{false};  // >>> novo
     long time_to_target_ms{-1};
+    long time_to_solution_ms{-1};
 
    private:
     long max_time_ms_;
@@ -1149,6 +1170,10 @@ class GRASP_KMedoids_POP_WithStopping : public GRASP_KMedoids_POP
                 iterations_to_best = i;
                 last_improve_iter = i;  // >>> novo
                 no_improve_streak = 0;  // >>> novo
+                ms = chrono::duration_cast<chrono::milliseconds>(
+                         chrono::steady_clock::now() - t0)
+                         .count();
+                time_to_solution_ms = (long) ms;  // atualizar sempre que melhorar
             }
             else
             {
@@ -1192,6 +1217,7 @@ class GRASP_KMedoids_POP_WithStopping : public GRASP_KMedoids_POP
     bool stopped_by_time{false};
     bool stopped_by_patience{false};  // >>> novo
     long time_to_target_ms{-1};
+    long time_to_solution_ms{-1};
 
    private:
     long max_time_ms_;
@@ -1241,6 +1267,10 @@ class GRASP_KMedoids_WLS_WithStopping : public GRASP_KMedoids_WLS
                 iterations_to_best = i;
                 last_improve_iter = i;  // >>> novo
                 no_improve_streak = 0;  // >>> novo
+                ms = chrono::duration_cast<chrono::milliseconds>(
+                         chrono::steady_clock::now() - t0)
+                         .count();
+                time_to_solution_ms = ms;  // atualizar sempre que melhorar
             }
             else
             {
@@ -1266,6 +1296,12 @@ class GRASP_KMedoids_WLS_WithStopping : public GRASP_KMedoids_WLS
                 break;
             }
 
+            if (target_avg_value_ > 0.0 && bestSol->cost <= target_avg_value_ + TARGET_TOL)
+            {
+                if (time_to_target_ms < 0) time_to_target_ms = (long) ms;
+                break;
+            }
+
             ++i;
         }
         total_iterations = i;
@@ -1279,6 +1315,7 @@ class GRASP_KMedoids_WLS_WithStopping : public GRASP_KMedoids_WLS
     bool stopped_by_time{false};
     bool stopped_by_patience{false};  // >>> novo
     long time_to_target_ms{-1};
+    long time_to_solution_ms{-1};
 
    private:
     long max_time_ms_;
@@ -1372,12 +1409,16 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
 
         save_ttt_header_if_needed(ttt_csv);
 
+        MAX_TIME_MILLIS = 30 * 1000;
+
         for (int run = 0; run < TTT_RUNS; ++run)
         {
             if (config.kind == SolverKind::Standard)
             {
                 GRASP_KMedoids_WithStopping grasp(config.alpha, MAX_TOTAL_ITERATIONS, D, k,
                                                   MAX_TIME_MILLIS, target_avg, true);
+
+                grasp.set_seed(run);
                 auto sol = grasp.solve();
                 append_ttt_line(ttt_csv, instance_file, k, config.name, target_avg, run,
                                 grasp.time_to_target_ms);
@@ -1386,6 +1427,7 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
             {
                 GRASP_KMedoids_FI_WithStopping grasp(config.alpha, MAX_TOTAL_ITERATIONS, D, k,
                                                      MAX_TIME_MILLIS, target_avg, true);
+                grasp.set_seed(run);
                 auto sol = grasp.solve();
                 append_ttt_line(ttt_csv, instance_file, k, config.name, target_avg, run,
                                 grasp.time_to_target_ms);
@@ -1394,6 +1436,7 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
             {
                 GRASP_KMedoids_POP_WithStopping grasp(config.alpha, MAX_TOTAL_ITERATIONS, D, k,
                                                       MAX_TIME_MILLIS, target_avg, true);
+                grasp.set_seed(run);
                 auto sol = grasp.solve();
                 append_ttt_line(ttt_csv, instance_file, k, config.name, target_avg, run,
                                 grasp.time_to_target_ms);
@@ -1403,6 +1446,7 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
                 GRASP_KMedoids_RW_WithStopping grasp(config.alpha, MAX_TOTAL_ITERATIONS, D, k,
                                                      GRASP_KMedoids_RW::LSSearch::BestImproving,
                                                      MAX_TIME_MILLIS, target_avg, true);
+                grasp.set_seed(run);
                 auto sol = grasp.solve();
                 append_ttt_line(ttt_csv, instance_file, k, config.name, target_avg, run,
                                 grasp.time_to_target_ms);
@@ -1411,6 +1455,7 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
             {
                 GRASP_KMedoids_RPG_WithStopping grasp(0.0, MAX_TOTAL_ITERATIONS, D, k, config.p,
                                                       MAX_TIME_MILLIS, target_avg, true);
+                grasp.set_seed(run);
                 auto sol = grasp.solve();
                 append_ttt_line(ttt_csv, instance_file, k, config.name, target_avg, run,
                                 grasp.time_to_target_ms);
@@ -1418,7 +1463,8 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
             else
             {
                 GRASP_KMedoids_WLS_WithStopping grasp(config.alpha, MAX_TOTAL_ITERATIONS, D, k,
-                                                      MAX_TIME_MILLIS);
+                                                      MAX_TIME_MILLIS, target_avg, true);
+                grasp.set_seed(run);
                 auto sol = grasp.solve();
                 append_ttt_line(ttt_csv, instance_file, k, config.name, target_avg, run,
                                 grasp.time_to_target_ms);
@@ -1434,6 +1480,7 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
 
         r.construct_mode = (config.kind == SolverKind::RPG) ? "RPG"
             : (config.kind == SolverKind::POP)              ? "STANDARD+POP"
+            : (config.kind == SolverKind::WLS)              ? "WLS"
                                                             : "STANDARD";
 
         r.ls_mode = (config.kind == SolverKind::StandardFI) ? "FIRST_IMPROVING"
@@ -1453,6 +1500,7 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
     Solution<int> sol;
     int total_iterations = 0, iterations_to_best = 0;
     long exec_ms = 0;
+    long time_to_solution_ms = -1;
     bool stopped_by_time = false;
 
     if (config.kind == SolverKind::Standard)
@@ -1463,6 +1511,7 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
         total_iterations = grasp.total_iterations;
         iterations_to_best = grasp.iterations_to_best;
         exec_ms = grasp.execution_time_ms;
+        time_to_solution_ms = grasp.time_to_solution_ms;
         stopped_by_time = grasp.stopped_by_time;
     }
     else if (config.kind == SolverKind::StandardFI)
@@ -1473,6 +1522,7 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
         total_iterations = grasp.total_iterations;
         iterations_to_best = grasp.iterations_to_best;
         exec_ms = grasp.execution_time_ms;
+        time_to_solution_ms = grasp.time_to_solution_ms;
         stopped_by_time = grasp.stopped_by_time;
     }
     else if (config.kind == SolverKind::POP)
@@ -1483,6 +1533,7 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
         total_iterations = grasp.total_iterations;
         iterations_to_best = grasp.iterations_to_best;
         exec_ms = grasp.execution_time_ms;
+        time_to_solution_ms = grasp.time_to_solution_ms;
         stopped_by_time = grasp.stopped_by_time;
     }
     else if (config.kind == SolverKind::RW_BI)
@@ -1494,6 +1545,7 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
         total_iterations = grasp.total_iterations;
         iterations_to_best = grasp.iterations_to_best;
         exec_ms = grasp.execution_time_ms;
+        time_to_solution_ms = grasp.time_to_solution_ms;
         stopped_by_time = grasp.stopped_by_time;
     }
     else if (config.kind == SolverKind::RPG)
@@ -1504,6 +1556,7 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
         total_iterations = grasp.total_iterations;
         iterations_to_best = grasp.iterations_to_best;
         exec_ms = grasp.execution_time_ms;
+        time_to_solution_ms = grasp.time_to_solution_ms;
         stopped_by_time = grasp.stopped_by_time;
     }
     else
@@ -1514,6 +1567,7 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
         total_iterations = grasp.total_iterations;
         iterations_to_best = grasp.iterations_to_best;
         exec_ms = grasp.execution_time_ms;
+        time_to_solution_ms = grasp.time_to_solution_ms;
         stopped_by_time = grasp.stopped_by_time;
     }
 
@@ -1555,6 +1609,7 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
     r.size = static_cast<int>(sol.size());
     r.feasible = true;
     r.time_s = time_sec;
+    r.time_to_solution_s = static_cast<double>(time_to_solution_ms) / 1000.0;
     r.elements = els.str();
 
     return r;
@@ -1603,7 +1658,7 @@ void save_results_to_csv(vector<ExperimentResult>& results, string& output_file)
     if (!f.is_open()) throw runtime_error("Failed to open output CSV: " + output_file);
 
     f << "config,file,n,k,alpha,construct_mode,ls_mode,reactive_alphas,reactive_block,"
-         "sample_size,iterations,time_limit_s,timed_out,max_value,size,feasible,time_s,elements\n";
+         "sample_size,iterations,time_limit_s,timed_out,max_value,size,feasible,time_s,time_to_solution_s,elements\n";
 
     f.setf(ios::fixed);
     for (auto& r : results)
@@ -1613,7 +1668,8 @@ void save_results_to_csv(vector<ExperimentResult>& results, string& output_file)
           << "\"," << r.reactive_block << ',' << r.sample_size << ',' << r.iterations << ','
           << setprecision(0) << r.time_limit_s << ',' << (r.timed_out ? "true" : "false") << ','
           << setprecision(6) << r.max_value << ',' << r.size << ','
-          << (r.feasible ? "true" : "false") << ',' << setprecision(3) << r.time_s << ",\""
+          << (r.feasible ? "true" : "false") << ',' << setprecision(3) << r.time_s  << ','
+          << r.time_to_solution_s << ",\""
           << r.elements << "\"\n";
     }
     cout << "\nResults saved to: " << output_file << "\n";
