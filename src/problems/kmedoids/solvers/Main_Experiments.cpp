@@ -1,14 +1,17 @@
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <numeric>
 #include <random>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -22,6 +25,20 @@
 #include "problems/kmedoids/solvers/GRASP_KMedoids_WLS.h"
 
 using namespace std;
+
+bool PRINT_ITER = true;
+
+string ILP_RESULTS_CSV = "results/kmedoids_ilp_all_runs_final_.csv";
+bool USE_ILP_CSV = true;
+
+struct IlpTarget
+{
+    double avg{-1.0};
+    double gap{1e9};
+    bool ok{false};
+};
+
+unordered_map<string, unordered_map<int, IlpTarget>> ILP_TARGETS;
 
 string INSTANCES_DIR = "instances/general";
 
@@ -74,18 +91,96 @@ vector<string> INSTANCE_FILES = {"2-FACE.i",
                                  "yeast.i",
                                  "waveform.I"};
 
-
 bool USE_ZSCORE = true;
 
-vector<int> K_VALUES = {3, 4, 5, 6, 7};
+vector<int> K_VALUES = {20, 25, 50};
 
 vector<double> ALPHA_VALUES = {0.05};
-vector<int> P_VALUES = {5, 20};
+vector<int> P_VALUES = {20};
 
 long MAX_TIME_MILLIS = 10L * 1000L;
 int MAX_TOTAL_ITERATIONS = 10000;
 
+int MAX_NO_IMPROVEMENT_ITERS = 3000;
+
+double TARGET_TOL = 1e-8;
+
 string RESULTS_DIR = "results";
+
+bool USE_FILTERS = true;
+
+vector<string> ALLOW_INSTANCES = {"2-FACE.i",
+                                 "200DATA.I",
+                                 "400p3c.i",
+                                 "A1.I",
+                                 "BreastB.I",
+                                 "Compound.I",
+                                 "Concrete_Data.i",
+                                 "DBLCA.I",
+                                 "DBLCB.I",
+                                 "DOWJONES.I",
+                                 "Normal300.i",
+                                 "PARKINSONS.i",
+                                 "Prima_Indians.i",
+                                 "SPRDESP.I",
+                                 "TRIPADVISOR.I",
+                                 "Uniform400.i",
+                                 "Uniform700.i",
+                                 "aggregation.I",
+                                 "banknote_authentication.I",
+                                 "broken-ring.i",
+                                 "bupa.I",
+                                 "chart.i",
+                                 "ecoli.i",
+                                 "face.i",
+                                 "forestfires.I",
+                                 "gauss9.i",
+                                 "glass.I",
+                                 "haberman.i",
+                                 "hayes-roth.I",
+                                 "indian.i",
+                                 "indochina_combat.I",
+                                 "ionosphere.I",
+                                 "iris.i",
+                                 "maronna.i",
+                                 "moreshapes.i",
+                                 "new-thyroid.I",
+                                 "numbers2.i",
+                                 "outliers.i",
+                                 "pib100.i",
+                                 "ruspini.i",
+                                 "sonar.I",
+                                 "spherical_4d3c.i",
+                                 "synthetic_control.i",
+                                 "vowel2.i",
+                                 "wdbc.I",
+                                 "wine.i",
+                                 "yeast.i",
+                                 "waveform.I"};
+
+
+
+
+// {"DOWJONES.I",    "Prima_Indians.i",
+//                                   "SPRDESP.I",     "TRIPADVISOR.I",
+//                                   "Uniform700.i",  "banknote_authentication.I",
+//                                   "broken-ring.i", "chart.i",
+//                                   "ecoli.i",       "gauss9.i",
+//                                   "haberman.i",    "indian.i",
+//                                   "numbers2.i",    "synthetic_control.i",
+//                                   "wdbc.I",        "yeast.i",
+//                                   "waveform.I"};
+
+vector<int> ALLOW_KS = {20, 25};
+
+vector<string> ALLOW_CONFIG_PREFIX = {
+    "GRASP_alpha=",
+    "GRASP_FI_alpha=",
+    "GRASP_POP_alpha=",
+    "RPG_p=",
+    "GRASP_WLS_alpha="};
+
+vector<string> BLOCK_CONFIG_PREFIX = {};
 
 bool ENABLE_TTT_MODE = false;
 int TTT_RUNS = 50;
@@ -380,6 +475,212 @@ vector<tuple<string, int, double>> TTT_TARGETS = {
     make_tuple("waveform.I", 6, 2.50),
 };
 
+inline string trim(string s)
+{
+    auto isws = [](int c) { return isspace(c); };
+    while (!s.empty() && isws(s.front())) s.erase(s.begin());
+    while (!s.empty() && isws(s.back())) s.pop_back();
+    if (!s.empty() && s.front() == '"') s.erase(s.begin());
+    if (!s.empty() && s.back() == '"') s.pop_back();
+    return s;
+}
+
+inline vector<string> split_csv_simple(string& line)
+{
+    vector<string> out;
+    stringstream ss(line);
+    string cell;
+    while (getline(ss, cell, ',')) out.push_back(cell);
+    return out;
+}
+
+inline bool parse_double_cell(string s, double& out)
+{
+    s = trim(move(s));
+    if (s.empty()) return false;
+
+    bool had_percent = false;
+    if (!s.empty() && s.back() == '%')
+    {
+        had_percent = true;
+        s.pop_back();
+        s = trim(move(s));
+    }
+
+    string slow = s;
+    for (auto& c : slow) c = (char) tolower(c);
+    if (slow == "nan" || slow == "na" || slow == "none" || slow == "-") return false;
+
+    if (s.find('.') == string::npos && s.find(',') != string::npos)
+    {
+        for (auto& c : s)
+            if (c == ',') c = '.';
+    }
+
+    out = stod(s);
+
+    if (had_percent) out /= 100.0;
+    return true;
+}
+
+inline bool parse_int_cell(string s, int& out)
+{
+    s = trim(move(s));
+    if (s.empty()) return false;
+
+    size_t i = 0;
+    while (i < s.size() && (s[i] == '+' || s[i] == '-' || isdigit((unsigned char) s[i]))) i++;
+
+    if (i < s.size()) s = s.substr(0, i);
+
+    out = stoi(s);
+    return true;
+}
+
+inline string basename_only(const string& p)
+{
+    auto pos = p.find_last_of("/\\");
+    return (pos == string::npos) ? p : p.substr(pos + 1);
+}
+
+inline string file_stem_only(const string& name)
+{
+    auto pos = name.find_last_of('.');
+    return (pos == string::npos) ? name : name.substr(0, pos);
+}
+
+inline void put_target_for_all_keys(unordered_map<string, unordered_map<int, IlpTarget>>& M,
+                                    const string& stem, const IlpTarget& t, int k)
+{
+    M[stem][k] = t;
+    M[stem + ".I"][k] = t;
+    M[stem + ".i"][k] = t;
+}
+
+void load_ilp_targets_from_csv(string& path)
+{
+    ifstream f(path);
+    if (!f.is_open())
+    {
+        cerr << "[WARN] Não abriu CSV do ILP: " << path << "\n";
+        return;
+    }
+    string header;
+    if (!getline(f, header)) return;
+    auto cols = split_csv_simple(header);
+
+    auto idx = [&](const string& name) -> int
+    {
+        for (int i = 0; i < (int) cols.size(); ++i)
+            if (trim(cols[i]) == name) return i;
+        return -1;
+    };
+
+    int i_file_stem = idx("file_stem");
+    int i_stem = idx("stem");
+    int i_file_full = idx("file");
+    int i_k = idx("k");
+    int i_avg = idx("objective_avg_per_point");
+    int i_gap = idx("mip_gap");
+    int i_stat = idx("status_text");
+
+    if ((i_file_stem < 0 && i_stem < 0 && i_file_full < 0) || i_k < 0 || i_avg < 0 || i_gap < 0 ||
+        i_stat < 0)
+    {
+        cerr << "[WARN] Cabeçalho inesperado no CSV do ILP. "
+             << "Esperado algo como "
+                "{file_stem|stem|file},k,objective_avg_per_point,mip_gap,status_text\n";
+        return;
+    }
+
+    string line;
+    int count_rows = 0, count_ok = 0, count_skipped = 0;
+    while (getline(f, line))
+    {
+        if (line.empty()) continue;
+
+        auto v = split_csv_simple(line);
+        auto need = max({i_file_stem, i_stem, i_file_full, i_k, i_avg, i_gap, i_stat});
+        if ((int) v.size() <= need)
+        {
+            ++count_skipped;
+            continue;
+        }
+
+        string key_stem;
+        if (i_file_stem >= 0)
+            key_stem = trim(v[i_file_stem]);
+        else if (i_stem >= 0)
+            key_stem = trim(v[i_stem]);
+        else
+            key_stem = file_stem_only(basename_only(trim(v[i_file_full])));
+
+        int k_val;
+        double avg_val, gap_val;
+        string status = trim(v[i_stat]);
+
+        bool ok_k = parse_int_cell(v[i_k], k_val);
+        bool ok_avg = parse_double_cell(v[i_avg], avg_val);
+        bool ok_gap = parse_double_cell(v[i_gap], gap_val);
+
+        ++count_rows;
+
+        if (!ok_k || !ok_avg || !ok_gap)
+        {
+            ++count_skipped;
+            continue;
+        }
+
+        bool ok_status = (status == "OK" || status == "OPTIMAL" || status == "COMPLETED");
+        bool good_gap = fabs(gap_val) <= 1e-6;
+
+        IlpTarget t;
+        t.avg = avg_val;
+        t.gap = gap_val;
+        t.ok = ok_status && good_gap && (avg_val > 0.0);
+
+        if (t.ok)
+        {
+            put_target_for_all_keys(ILP_TARGETS, key_stem, t, k_val);
+            ++count_ok;
+        }
+        else
+        {
+            ++count_skipped;
+        }
+    }
+
+    cerr << "[INFO] ILP_TARGETS carregado: " << ILP_TARGETS.size()
+         << " instâncias (linhas lidas=" << count_rows << ", válidas=" << count_ok
+         << ", descartadas=" << count_skipped << ").\n";
+}
+
+bool try_get_ilp_optimum(string& file, int k, double& avg_out)
+{
+    auto it = ILP_TARGETS.find(file);
+    if (it != ILP_TARGETS.end())
+    {
+        auto jt = it->second.find(k);
+        if (jt != it->second.end() && jt->second.ok && jt->second.avg > 0.0)
+        {
+            avg_out = jt->second.avg;
+            return true;
+        }
+    }
+    string stem = file_stem_only(file);
+    auto it2 = ILP_TARGETS.find(stem);
+    if (it2 != ILP_TARGETS.end())
+    {
+        auto jt = it2->second.find(k);
+        if (jt != it2->second.end() && jt->second.ok && jt->second.avg > 0.0)
+        {
+            avg_out = jt->second.avg;
+            return true;
+        }
+    }
+    return false;
+}
+
 double get_target_avg_for(string& file, int k)
 {
     for (auto& t : TTT_TARGETS)
@@ -448,6 +749,10 @@ class GRASP_KMedoids_WithStopping : public GRASP_KMedoids
         auto t0 = chrono::steady_clock::now();
         int i = 0;
 
+        // >>> novo: paciência
+        int last_improve_iter = -1;
+        int no_improve_streak = 0;
+
         while (i < iterations)
         {
             auto now = chrono::steady_clock::now();
@@ -465,15 +770,37 @@ class GRASP_KMedoids_WithStopping : public GRASP_KMedoids
             {
                 bestSol = sol;
                 iterations_to_best = i;
+                last_improve_iter = i;  // >>> novo
+                no_improve_streak = 0;  // >>> novo
+            }
+            else
+            {
+                if (last_improve_iter >= 0)  // >>> novo
+                    no_improve_streak = i - last_improve_iter;
+            }
 
-                if (ttt_mode_ && target_avg_value_ > 0.0 && time_to_target_ms < 0)
-                {
-                    if (bestSol->cost <= target_avg_value_)
-                    {
-                        time_to_target_ms = static_cast<long>(ms);
-                        break;
-                    }
-                }
+            if (PRINT_ITER)
+            {
+                double elapsed_s = ms / 1000.0;
+                double curr = sol->cost;
+                double best = (i == 0 ? curr : bestSol->cost);
+                cout << "      [it " << i << "] avg=" << fixed << setprecision(9) << curr
+                     << " | best=" << best << " | streak=" << no_improve_streak
+                     << " | t=" << setprecision(3) << elapsed_s << "s\n";
+            }
+
+            // >>> novo: condição de parada por paciência
+            if (MAX_NO_IMPROVEMENT_ITERS > 0 && last_improve_iter >= 0 &&
+                no_improve_streak >= MAX_NO_IMPROVEMENT_ITERS)
+            {
+                stopped_by_patience = true;
+                break;
+            }
+
+            if (target_avg_value_ > 0.0 && bestSol->cost <= target_avg_value_ + TARGET_TOL)
+            {
+                if (time_to_target_ms < 0) time_to_target_ms = static_cast<long>(ms);
+                break;
             }
             ++i;
         }
@@ -489,6 +816,7 @@ class GRASP_KMedoids_WithStopping : public GRASP_KMedoids
     int iterations_to_best{0};
     long execution_time_ms{0};
     bool stopped_by_time{false};
+    bool stopped_by_patience{false};  // >>> novo
     long time_to_target_ms{-1};
 
    private:
@@ -500,8 +828,7 @@ class GRASP_KMedoids_WithStopping : public GRASP_KMedoids
 class GRASP_KMedoids_RW_WithStopping : public GRASP_KMedoids_RW
 {
    public:
-    GRASP_KMedoids_RW_WithStopping(double alpha, int iterations,
-                                   vector<vector<double>>& D, int k,
+    GRASP_KMedoids_RW_WithStopping(double alpha, int iterations, vector<vector<double>>& D, int k,
                                    GRASP_KMedoids_RW::LSSearch mode, long max_time_ms,
                                    double target_avg_value = -1.0, bool ttt_mode = false)
         : GRASP_KMedoids_RW(alpha, iterations, D, k, mode),
@@ -516,6 +843,11 @@ class GRASP_KMedoids_RW_WithStopping : public GRASP_KMedoids_RW
         bestSol = createEmptySol();
         auto t0 = chrono::steady_clock::now();
         int i = 0;
+
+        // >>> novo: paciência
+        int last_improve_iter = -1;
+        int no_improve_streak = 0;
+
         while (i < iterations)
         {
             auto now = chrono::steady_clock::now();
@@ -533,27 +865,50 @@ class GRASP_KMedoids_RW_WithStopping : public GRASP_KMedoids_RW
             {
                 bestSol = sol;
                 iterations_to_best = i;
-                if (ttt_mode_ && target_avg_value_ > 0.0 && time_to_target_ms < 0)
-                {
-                    if (bestSol->cost <= target_avg_value_)
-                    {
-                        time_to_target_ms = (long) ms;
-                        break;
-                    }
-                }
+                last_improve_iter = i;  // >>> novo
+                no_improve_streak = 0;  // >>> novo
+            }
+            else
+            {
+                if (last_improve_iter >= 0)  // >>> novo
+                    no_improve_streak = i - last_improve_iter;
+            }
+
+            if (PRINT_ITER)
+            {
+                double elapsed_s = ms / 1000.0;
+                double curr = sol->cost;
+                double best = (i == 0 ? curr : bestSol->cost);
+                cout << "      [it " << i << "] avg=" << fixed << setprecision(9) << curr
+                     << " | best=" << best << " | streak=" << no_improve_streak
+                     << " | t=" << setprecision(3) << elapsed_s << "s\n";
+            }
+
+            // >>> novo: condição de parada por paciência
+            if (MAX_NO_IMPROVEMENT_ITERS > 0 && last_improve_iter >= 0 &&
+                no_improve_streak >= MAX_NO_IMPROVEMENT_ITERS)
+            {
+                stopped_by_patience = true;
+                break;
+            }
+
+            if (target_avg_value_ > 0.0 && bestSol->cost <= target_avg_value_ + TARGET_TOL)
+            {
+                if (time_to_target_ms < 0) time_to_target_ms = (long) ms;
+                break;
             }
             ++i;
         }
         total_iterations = i;
         auto tf = chrono::steady_clock::now();
-        execution_time_ms =
-            (long) chrono::duration_cast<chrono::milliseconds>(tf - t0).count();
+        execution_time_ms = (long) chrono::duration_cast<chrono::milliseconds>(tf - t0).count();
         return *bestSol;
     }
 
     int total_iterations{0}, iterations_to_best{0};
     long execution_time_ms{0};
     bool stopped_by_time{false};
+    bool stopped_by_patience{false};  // >>> novo
     long time_to_target_ms{-1};
 
    private:
@@ -565,9 +920,9 @@ class GRASP_KMedoids_RW_WithStopping : public GRASP_KMedoids_RW
 class GRASP_KMedoids_FI_WithStopping : public GRASP_KMedoids_FI
 {
    public:
-    GRASP_KMedoids_FI_WithStopping(double alpha, int iterations,
-                                   vector<vector<double>>& D, int k, long max_time_ms,
-                                   double target_avg_value = -1.0, bool ttt_mode = false)
+    GRASP_KMedoids_FI_WithStopping(double alpha, int iterations, vector<vector<double>>& D, int k,
+                                   long max_time_ms, double target_avg_value = -1.0,
+                                   bool ttt_mode = false)
         : GRASP_KMedoids_FI(alpha, iterations, D, k),
           max_time_ms_(max_time_ms),
           target_avg_value_(target_avg_value),
@@ -581,6 +936,10 @@ class GRASP_KMedoids_FI_WithStopping : public GRASP_KMedoids_FI
         auto t0 = chrono::steady_clock::now();
         int i = 0;
 
+        // >>> novo: paciência
+        int last_improve_iter = -1;
+        int no_improve_streak = 0;
+
         while (i < iterations)
         {
             auto now = chrono::steady_clock::now();
@@ -598,23 +957,45 @@ class GRASP_KMedoids_FI_WithStopping : public GRASP_KMedoids_FI
             {
                 bestSol = sol;
                 iterations_to_best = i;
+                last_improve_iter = i;  // >>> novo
+                no_improve_streak = 0;  // >>> novo
+            }
+            else
+            {
+                if (last_improve_iter >= 0)  // >>> novo
+                    no_improve_streak = i - last_improve_iter;
+            }
 
-                if (ttt_mode_ && target_avg_value_ > 0.0 && time_to_target_ms < 0)
-                {
-                    if (bestSol->cost <= target_avg_value_)
-                    {
-                        time_to_target_ms = static_cast<long>(ms);
-                        break;
-                    }
-                }
+            if (PRINT_ITER)
+            {
+                double elapsed_s = ms / 1000.0;
+                double curr = sol->cost;
+                double best = (i == 0 ? curr : bestSol->cost);
+                cout << "      [it " << i << "] avg=" << fixed << setprecision(9) << curr
+                     << " | best=" << best << " | streak=" << no_improve_streak
+                     << " | t=" << setprecision(3) << elapsed_s << "s\n";
+            }
+
+            // >>> novo: condição de parada por paciência
+            if (MAX_NO_IMPROVEMENT_ITERS > 0 && last_improve_iter >= 0 &&
+                no_improve_streak >= MAX_NO_IMPROVEMENT_ITERS)
+            {
+                stopped_by_patience = true;
+                break;
+            }
+
+            if (target_avg_value_ > 0.0 && bestSol->cost <= target_avg_value_ + TARGET_TOL)
+            {
+                if (time_to_target_ms < 0) time_to_target_ms = static_cast<long>(ms);
+                break;
             }
             ++i;
         }
 
         total_iterations = i;
         auto tf = chrono::steady_clock::now();
-        execution_time_ms = static_cast<long>(
-            chrono::duration_cast<chrono::milliseconds>(tf - t0).count());
+        execution_time_ms =
+            static_cast<long>(chrono::duration_cast<chrono::milliseconds>(tf - t0).count());
         return *bestSol;
     }
 
@@ -622,6 +1003,7 @@ class GRASP_KMedoids_FI_WithStopping : public GRASP_KMedoids_FI
     int iterations_to_best{0};
     long execution_time_ms{0};
     bool stopped_by_time{false};
+    bool stopped_by_patience{false};  // >>> novo
     long time_to_target_ms{-1};
 
    private:
@@ -649,6 +1031,10 @@ class GRASP_KMedoids_RPG_WithStopping : public GRASP_KMedoids_RPG
         auto t0 = chrono::steady_clock::now();
         int i = 0;
 
+        // >>> novo: paciência
+        int last_improve_iter = -1;
+        int no_improve_streak = 0;
+
         while (i < iterations)
         {
             auto now = chrono::steady_clock::now();
@@ -666,15 +1052,37 @@ class GRASP_KMedoids_RPG_WithStopping : public GRASP_KMedoids_RPG
             {
                 bestSol = sol;
                 iterations_to_best = i;
+                last_improve_iter = i;  // >>> novo
+                no_improve_streak = 0;  // >>> novo
+            }
+            else
+            {
+                if (last_improve_iter >= 0)  // >>> novo
+                    no_improve_streak = i - last_improve_iter;
+            }
 
-                if (ttt_mode_ && target_avg_value_ > 0.0 && time_to_target_ms < 0)
-                {
-                    if (bestSol->cost <= target_avg_value_)
-                    {
-                        time_to_target_ms = static_cast<long>(ms);
-                        break;
-                    }
-                }
+            if (PRINT_ITER)
+            {
+                double elapsed_s = ms / 1000.0;
+                double curr = sol->cost;
+                double best = (i == 0 ? curr : bestSol->cost);
+                cout << "      [it " << i << "] avg=" << fixed << setprecision(9) << curr
+                     << " | best=" << best << " | streak=" << no_improve_streak
+                     << " | t=" << setprecision(3) << elapsed_s << "s\n";
+            }
+
+            // >>> novo: condição de parada por paciência
+            if (MAX_NO_IMPROVEMENT_ITERS > 0 && last_improve_iter >= 0 &&
+                no_improve_streak >= MAX_NO_IMPROVEMENT_ITERS)
+            {
+                stopped_by_patience = true;
+                break;
+            }
+
+            if (target_avg_value_ > 0.0 && bestSol->cost <= target_avg_value_ + TARGET_TOL)
+            {
+                if (time_to_target_ms < 0) time_to_target_ms = static_cast<long>(ms);
+                break;
             }
             ++i;
         }
@@ -690,6 +1098,7 @@ class GRASP_KMedoids_RPG_WithStopping : public GRASP_KMedoids_RPG
     int iterations_to_best{0};
     long execution_time_ms{0};
     bool stopped_by_time{false};
+    bool stopped_by_patience{false};  // >>> novo
     long time_to_target_ms{-1};
 
    private:
@@ -701,9 +1110,9 @@ class GRASP_KMedoids_RPG_WithStopping : public GRASP_KMedoids_RPG
 class GRASP_KMedoids_POP_WithStopping : public GRASP_KMedoids_POP
 {
    public:
-    GRASP_KMedoids_POP_WithStopping(double alpha, int iterations,
-                                    vector<vector<double>>& D, int k, long max_time_ms,
-                                    double target_avg_value = -1.0, bool ttt_mode = false)
+    GRASP_KMedoids_POP_WithStopping(double alpha, int iterations, vector<vector<double>>& D, int k,
+                                    long max_time_ms, double target_avg_value = -1.0,
+                                    bool ttt_mode = false)
         : GRASP_KMedoids_POP(alpha, iterations, D, k),
           max_time_ms_(max_time_ms),
           target_avg_value_(target_avg_value),
@@ -716,6 +1125,11 @@ class GRASP_KMedoids_POP_WithStopping : public GRASP_KMedoids_POP
         bestSol = createEmptySol();
         auto t0 = chrono::steady_clock::now();
         int i = 0;
+
+        // >>> novo: paciência
+        int last_improve_iter = -1;
+        int no_improve_streak = 0;
+
         while (i < iterations)
         {
             auto now = chrono::steady_clock::now();
@@ -733,27 +1147,50 @@ class GRASP_KMedoids_POP_WithStopping : public GRASP_KMedoids_POP
             {
                 bestSol = sol;
                 iterations_to_best = i;
-                if (ttt_mode_ && target_avg_value_ > 0.0 && time_to_target_ms < 0)
-                {
-                    if (bestSol->cost <= target_avg_value_)
-                    {
-                        time_to_target_ms = (long) ms;
-                        break;
-                    }
-                }
+                last_improve_iter = i;  // >>> novo
+                no_improve_streak = 0;  // >>> novo
+            }
+            else
+            {
+                if (last_improve_iter >= 0)  // >>> novo
+                    no_improve_streak = i - last_improve_iter;
+            }
+
+            if (PRINT_ITER)
+            {
+                double elapsed_s = ms / 1000.0;
+                double curr = sol->cost;
+                double best = (i == 0 ? curr : bestSol->cost);
+                cout << "      [it " << i << "] avg=" << fixed << setprecision(9) << curr
+                     << " | best=" << best << " | streak=" << no_improve_streak
+                     << " | t=" << setprecision(3) << elapsed_s << "s\n";
+            }
+
+            // >>> novo: condição de parada por paciência
+            if (MAX_NO_IMPROVEMENT_ITERS > 0 && last_improve_iter >= 0 &&
+                no_improve_streak >= MAX_NO_IMPROVEMENT_ITERS)
+            {
+                stopped_by_patience = true;
+                break;
+            }
+
+            if (target_avg_value_ > 0.0 && bestSol->cost <= target_avg_value_ + TARGET_TOL)
+            {
+                if (time_to_target_ms < 0) time_to_target_ms = (long) ms;
+                break;
             }
             ++i;
         }
         total_iterations = i;
         auto tf = chrono::steady_clock::now();
-        execution_time_ms =
-            (long) chrono::duration_cast<chrono::milliseconds>(tf - t0).count();
+        execution_time_ms = (long) chrono::duration_cast<chrono::milliseconds>(tf - t0).count();
         return *bestSol;
     }
 
     int total_iterations{0}, iterations_to_best{0};
     long execution_time_ms{0};
     bool stopped_by_time{false};
+    bool stopped_by_patience{false};  // >>> novo
     long time_to_target_ms{-1};
 
    private:
@@ -765,20 +1202,26 @@ class GRASP_KMedoids_POP_WithStopping : public GRASP_KMedoids_POP
 class GRASP_KMedoids_WLS_WithStopping : public GRASP_KMedoids_WLS
 {
    public:
-    GRASP_KMedoids_WLS_WithStopping(double alpha, int iterations,
-                                    vector<vector<double>>& D, int k, long max_time_ms,
-                                    double target_avg_value = -1.0, bool ttt_mode = false)
-        : GRASP_KMedoids_WLS(alpha, iterations, D, k), max_time_ms_(max_time_ms),
-        target_avg_value_(target_avg_value), ttt_mode_(ttt_mode)
+    GRASP_KMedoids_WLS_WithStopping(double alpha, int iterations, vector<vector<double>>& D, int k,
+                                    long max_time_ms, double target_avg_value = -1.0,
+                                    bool ttt_mode = false)
+        : GRASP_KMedoids_WLS(alpha, iterations, D, k),
+          max_time_ms_(max_time_ms),
+          target_avg_value_(target_avg_value),
+          ttt_mode_(ttt_mode)
     {
     }
-
 
     Solution<int> solve()
     {
         bestSol = createEmptySol();
         auto t0 = chrono::steady_clock::now();
         int i = 0;
+
+        // >>> novo: paciência
+        int last_improve_iter = -1;
+        int no_improve_streak = 0;
+
         while (i < iterations)
         {
             auto now = chrono::steady_clock::now();
@@ -796,26 +1239,51 @@ class GRASP_KMedoids_WLS_WithStopping : public GRASP_KMedoids_WLS
             {
                 bestSol = sol;
                 iterations_to_best = i;
+                last_improve_iter = i;  // >>> novo
+                no_improve_streak = 0;  // >>> novo
             }
+            else
+            {
+                if (last_improve_iter >= 0)  // >>> novo
+                    no_improve_streak = i - last_improve_iter;
+            }
+
+            if (PRINT_ITER)
+            {
+                double elapsed_s = ms / 1000.0;
+                double curr = sol->cost;
+                double best = (i == 0 ? curr : bestSol->cost);
+                cout << "      [it " << i << "] avg=" << fixed << setprecision(9) << curr
+                     << " | best=" << best << " | streak=" << no_improve_streak
+                     << " | t=" << setprecision(3) << elapsed_s << "s\n";
+            }
+
+            // >>> novo: condição de parada por paciência
+            if (MAX_NO_IMPROVEMENT_ITERS > 0 && last_improve_iter >= 0 &&
+                no_improve_streak >= MAX_NO_IMPROVEMENT_ITERS)
+            {
+                stopped_by_patience = true;
+                break;
+            }
+
             ++i;
         }
         total_iterations = i;
         auto tf = chrono::steady_clock::now();
-        execution_time_ms =
-            (long) chrono::duration_cast<chrono::milliseconds>(tf - t0).count();
+        execution_time_ms = (long) chrono::duration_cast<chrono::milliseconds>(tf - t0).count();
         return *bestSol;
     }
 
     int total_iterations{0}, iterations_to_best{0};
     long execution_time_ms{0};
     bool stopped_by_time{false};
+    bool stopped_by_patience{false};  // >>> novo
     long time_to_target_ms{-1};
 
    private:
     long max_time_ms_;
     double target_avg_value_;
     bool ttt_mode_;
-
 };
 
 vector<ExperimentConfig> generate_configurations()
@@ -840,11 +1308,10 @@ vector<ExperimentConfig> generate_configurations()
 
     for (double a : ALPHA_VALUES)
         cfgs.push_back(ExperimentConfig{"GRASP_POP_alpha=" + to_string(a), SolverKind::POP, a, -1});
-    
+
     for (double a : ALPHA_VALUES)
         cfgs.push_back(ExperimentConfig{"GRASP_WLS_alpha=" + to_string(a), SolverKind::WLS, a, -1});
-    
-    
+
     return cfgs;
 }
 
@@ -884,9 +1351,20 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
     auto D = load_distance_matrix(instance_path);
     int n = static_cast<int>(D.size());
 
+    double ilp_target = -1.0;
+    if (USE_ILP_CSV)
+    {
+        double tavg = -1.0;
+        if (try_get_ilp_optimum(instance_file, k, tavg)) ilp_target = tavg;
+    }
+    if (ilp_target > 0.0)
+    {
+        cout << "    [target] ILP avg = " << setprecision(12) << ilp_target << "\n";
+    }
+
     if (ENABLE_TTT_MODE)
     {
-        double target_avg = get_target_avg_for(instance_file, k);
+        double target_avg = (ilp_target > 0.0) ? ilp_target : get_target_avg_for(instance_file, k);
         if (!(target_avg > 0.0))
         {
             cout << "    [WARN] target_avg não definido (>0). Os tempos ficarão como -1.\n";
@@ -939,8 +1417,8 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
             }
             else
             {
-                GRASP_KMedoids_WLS_WithStopping grasp(
-                    config.alpha, MAX_TOTAL_ITERATIONS, D, k, MAX_TIME_MILLIS);
+                GRASP_KMedoids_WLS_WithStopping grasp(config.alpha, MAX_TOTAL_ITERATIONS, D, k,
+                                                      MAX_TIME_MILLIS);
                 auto sol = grasp.solve();
                 append_ttt_line(ttt_csv, instance_file, k, config.name, target_avg, run,
                                 grasp.time_to_target_ms);
@@ -979,8 +1457,8 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
 
     if (config.kind == SolverKind::Standard)
     {
-        GRASP_KMedoids_WithStopping grasp(config.alpha, MAX_TOTAL_ITERATIONS, D, k,
-                                          MAX_TIME_MILLIS);
+        GRASP_KMedoids_WithStopping grasp(config.alpha, MAX_TOTAL_ITERATIONS, D, k, MAX_TIME_MILLIS,
+                                          ilp_target, false);
         sol = grasp.solve();
         total_iterations = grasp.total_iterations;
         iterations_to_best = grasp.iterations_to_best;
@@ -990,7 +1468,7 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
     else if (config.kind == SolverKind::StandardFI)
     {
         GRASP_KMedoids_FI_WithStopping grasp(config.alpha, MAX_TOTAL_ITERATIONS, D, k,
-                                             MAX_TIME_MILLIS);
+                                             MAX_TIME_MILLIS, ilp_target, false);
         sol = grasp.solve();
         total_iterations = grasp.total_iterations;
         iterations_to_best = grasp.iterations_to_best;
@@ -1000,7 +1478,7 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
     else if (config.kind == SolverKind::POP)
     {
         GRASP_KMedoids_POP_WithStopping grasp(config.alpha, MAX_TOTAL_ITERATIONS, D, k,
-                                              MAX_TIME_MILLIS);
+                                              MAX_TIME_MILLIS, ilp_target, false);
         sol = grasp.solve();
         total_iterations = grasp.total_iterations;
         iterations_to_best = grasp.iterations_to_best;
@@ -1011,7 +1489,7 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
     {
         GRASP_KMedoids_RW_WithStopping grasp(config.alpha, MAX_TOTAL_ITERATIONS, D, k,
                                              GRASP_KMedoids_RW::LSSearch::BestImproving,
-                                             MAX_TIME_MILLIS);
+                                             MAX_TIME_MILLIS, ilp_target, false);
         sol = grasp.solve();
         total_iterations = grasp.total_iterations;
         iterations_to_best = grasp.iterations_to_best;
@@ -1021,7 +1499,7 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
     else if (config.kind == SolverKind::RPG)
     {
         GRASP_KMedoids_RPG_WithStopping grasp(0.0, MAX_TOTAL_ITERATIONS, D, k, config.p,
-                                              MAX_TIME_MILLIS);
+                                              MAX_TIME_MILLIS, ilp_target, false);
         sol = grasp.solve();
         total_iterations = grasp.total_iterations;
         iterations_to_best = grasp.iterations_to_best;
@@ -1082,48 +1560,6 @@ ExperimentResult run_experiment(ExperimentConfig& config, string& instance_file,
     return r;
 }
 
-bool USE_FILTERS = true;
-
-vector<string> ALLOW_INSTANCES = {
-                                //   "2-FACE.i",
-                                //   "200DATA.I",
-                                //   "400p3c.i",
-                                //   "A1.I",
-                                //   "BreastB.I",
-                                //   "Compound.I",
-                                  "Concrete_Data.i",
-                                  "DOWJONES.I",
-                                  "Prima_Indians.i",
-                                  "SPRDESP.I",
-                                  "TRIPADVISOR.I",
-                                  "Uniform700.i",
-                                  "banknote_authentication.I",
-                                  "broken-ring.i",
-                                  "chart.i",
-                                  "ecoli.i",
-                                  "gauss9.i",
-                                  "haberman.i",
-                                  "indian.i",
-                                  "numbers2.i",
-                                  "synthetic_control.i",
-                                  "wdbc.I",
-                                  "yeast.i",
-                                  "waveform.I"};
-
-vector<int> ALLOW_KS = {3, 4, 5, 6, 7};
-
-// vector<string> ALLOW_CONFIG_PREFIX = {"GRASP_alpha=0.05", "RPG_p=10"};
-// vector<string> ALLOW_CONFIG_PREFIX = {"GRASP_alpha=0.05"};
-vector<string> ALLOW_CONFIG_PREFIX = {
-    //"GRASP_alpha=",
-    //"GRASP_FI_alpha=",
-    //"GRASP_POP_alpha=",
-    //"RPG_p=",
-    "GRASP_WLS_alpha="
-};
-
-vector<string> BLOCK_CONFIG_PREFIX = {};
-
 bool starts_with(const string& s, const string& p) { return s.rfind(p, 0) == 0; }
 
 bool contains_str(const vector<string>& v, const string& x)
@@ -1140,14 +1576,14 @@ bool contains_int(const vector<int>& v, int x)
     return false;
 }
 
-bool match_any_prefix(const string& s, const vector<string>& prefixes)
+bool match_any_prefix(string& s, vector<string>& prefixes)
 {
     for (auto& p : prefixes)
         if (starts_with(s, p)) return true;
     return false;
 }
 
-bool should_run_config(const string& inst, int k, const ExperimentConfig& cfg)
+bool should_run_config(string& inst, int k, ExperimentConfig& cfg)
 {
     if (!USE_FILTERS) return true;
     if (!ALLOW_INSTANCES.empty() && !contains_str(ALLOW_INSTANCES, inst)) return false;
@@ -1170,7 +1606,7 @@ void save_results_to_csv(vector<ExperimentResult>& results, string& output_file)
          "sample_size,iterations,time_limit_s,timed_out,max_value,size,feasible,time_s,elements\n";
 
     f.setf(ios::fixed);
-    for (const auto& r : results)
+    for (auto& r : results)
     {
         f << r.config << ',' << r.file << ',' << r.n << ',' << r.k << ',' << setprecision(4)
           << r.alpha << ',' << r.construct_mode << ',' << r.ls_mode << ",\"" << r.reactive_alphas
@@ -1244,6 +1680,11 @@ int main()
     }
     cout << "==============================================\n\n";
 
+    if (USE_ILP_CSV)
+    {
+        load_ilp_targets_from_csv(ILP_RESULTS_CSV);
+    }
+
     auto configs = generate_configurations();
     vector<ExperimentResult> all_results;
 
@@ -1278,7 +1719,6 @@ int main()
                 if (!ENABLE_TTT_MODE)
                 {
                     all_results.push_back(res);
-
                     save_results_to_csv(all_results, output_csv);
                 }
             }
