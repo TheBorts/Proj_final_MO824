@@ -10,8 +10,8 @@ import numpy as np
 import pandas as pd
 from gurobipy import Model, GRB, quicksum
 
-INST_DIR = Path("instances/general")
-KS = [3, 4, 5, 6]
+INST_DIR = Path("instances/teste")
+KS = [100]
 TIME_LIMIT_SEC = 10 * 60
 OUT_DIR = Path("results")
 
