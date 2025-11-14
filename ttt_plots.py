@@ -4,7 +4,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 CSV_PATHS = [
-    "results/ttt_grasp_kmedoids_20251108_153100.csv",
+    "results/ttt_grasp_kmedoids_5_easy.csv",
+    "results/ttt_grasp_kmedoids_25_easy.csv",
+    "results/ttt_grasp_kmedoids_5_hard.csv",
+    "results/ttt_grasp_kmedoids_25_hard.csv",
+
     # "results/ttt_outro.csv",
 ]
 
